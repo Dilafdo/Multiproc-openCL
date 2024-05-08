@@ -315,7 +315,18 @@ void apply_zncc(cl_device_id device, cl_context context, cl_kernel kernel, cl_co
         exit(1);
     }
 
-    // clSetKernelArg(kernel, 3, sizeof(float), NULL);
+    // size_t localMemSize = 32 * 32 * sizeof(cl_float4);
+    // err = clSetKernelArg(kernel, 3, localMemSize, NULL);
+    // if(err < 0) {
+    //     perror("zncc, Error: clSetKernelArg, localMemSize 1");
+    //     exit(1);
+    // }
+
+    // err = clSetKernelArg(kernel, 4, localMemSize, NULL);
+    // if(err < 0) {
+    //     perror("zncc, Error: clSetKernelArg, localMemSize 2");
+    //     exit(1);
+    // }
 
     /* Access kernel/work-group properties */
     err = clGetKernelWorkGroupInfo(kernel, device, CL_KERNEL_WORK_GROUP_SIZE, sizeof(wg_size), &wg_size, NULL);
@@ -333,9 +344,10 @@ void apply_zncc(cl_device_id device, cl_context context, cl_kernel kernel, cl_co
 
     // Execute the OpenCL kernel
     size_t globalWorkSize[2] = { width, height };
+    // size_t localWorkSize[2] = {32, 32};
     err = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, globalWorkSize, NULL, 0, NULL, &gaussian_event);
     if(err < 0) {
-        perror("zncc, Error: clEnqueueNDRangeKernel 316 ");
+        perror("zncc, Error: clEnqueueNDRangeKernel");
         exit(1);
     }
 
@@ -502,14 +514,23 @@ void apply_occlusion_fill(cl_context context, cl_kernel kernel, cl_command_queue
         exit(1);
     }
 
+    size_t localMemSize = sizeof(float) * 4 * (1024 + 4 - 1) * (768 + 4 - 1);
+    err = clSetKernelArg(kernel, 2, localMemSize, NULL);
+    if(err < 0) {
+        perror("occlustion_fill, Error: clSetKernelArg, localMemSize");
+        exit(1);
+    }
+
     // Execute the OpenCL kernel
     size_t globalWorkSize[2] = { width, height };
-    err = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, globalWorkSize, NULL, 0, NULL, &occlustion_fill_event);
+    size_t localWorkSize[2] = {16, 16};
+    err = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, globalWorkSize, localWorkSize, 0, NULL, &occlustion_fill_event);
     if(err < 0) {
         perror("occlustion_fill, Error: clEnqueueNDRangeKernel");
         exit(1);
     }
 
+    printf("HELLO\n");
     // Read the output image back to the host
     err = clEnqueueReadImage(queue, output_image, CL_TRUE, (size_t[3]){0, 0, 0}, (size_t[3]){width, height, 1},
                              0, 0, (void*)output_im0 -> image, 0, NULL, &occlustion_fill_read_event);

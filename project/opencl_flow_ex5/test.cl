@@ -28,7 +28,10 @@ __kernel void color_to_gray(__read_only image2d_t inputImage, __write_only image
 #define WINDOW_HALF_SIZE 7
 
 __kernel void left_disparity(__read_only image2d_t inputImage1, __read_only image2d_t inputImage2, __write_only image2d_t outputImage) {
-    const int2 pos = (int2)(get_global_id(0), get_global_id(1));
+    int x = get_global_id(0);
+    int y = get_global_id(1);
+
+    const int2 pos = (int2)(x, y);
 
     float4 sum = (float4)(0.0f, 0.0f, 0.0f, 0.0f);
 
@@ -190,13 +193,35 @@ __kernel void crosscheck(__read_only image2d_t inputImage1, __read_only image2d_
     write_imagef(outputImage, pos, crosscheck_output);
 }
 
-__kernel void occlusion_fill(__read_only image2d_t inputImage, __write_only image2d_t outputImage) {
+__kernel void occlusion_fill(__read_only image2d_t inputImage, __write_only image2d_t outputImage, __local float4* localMem) {
     const int2 pos = (int2)(get_global_id(0), get_global_id(1));
+    const int2 localPos = (int2)(get_local_id(0), get_local_id(1));
+    const int2 groupSize = (int2)(get_local_size(0), get_local_size(1));
 
-    const float4 imagePixel = read_imagef(inputImage, sampler, pos);
-    float4 occlusion_output = (float4)(0.0f, 0.0f, 0.0f, 1.0f);
+    // Define the size of the local memory tile including the Gaussian kernel radius
+    const int radius = 2;
+    const int diameter = radius * 2 + 1;
+    const int localWidth = groupSize.x + diameter - 1;
+    const int localHeight = groupSize.y + diameter - 1;
+    const int2 localDim = (int2)(localWidth, localHeight);
 
-    const float gassian_kernel[5][5] = {
+    // Load data into local memory
+    const int2 localIndex = (int2)(localPos.x + radius, localPos.y + radius);
+    if ((localIndex.x < localDim.x) && (localIndex.y < localDim.y)) {
+        const int2 globalIndex = pos - (int2)(radius, radius) + (int2)(get_local_id(0), get_local_id(1));
+        if (globalIndex.x >= 0 && globalIndex.x < get_image_width(inputImage) &&
+            globalIndex.y >= 0 && globalIndex.y < get_image_height(inputImage)) {
+            localMem[localIndex.y * localWidth + localIndex.x] = read_imagef(inputImage, CLK_NORMALIZED_COORDS_FALSE | CLK_ADDRESS_CLAMP_TO_EDGE | CLK_FILTER_NEAREST, globalIndex);
+        } else {
+            localMem[localIndex.y * localWidth + localIndex.x] = (float4)(0.0f, 0.0f, 0.0f, 0.0f);
+        }
+    }
+    
+    // Synchronize to ensure all local memory is populated
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    // Gaussian kernel data
+    const float gaussian_kernel[5][5] = {
         {0.0030, 0.0133, 0.0219, 0.0133, 0.0030},
         {0.0133, 0.0596, 0.0983, 0.0596, 0.0133},
         {0.0219, 0.0983, 0.1621, 0.0983, 0.0219},
@@ -204,48 +229,32 @@ __kernel void occlusion_fill(__read_only image2d_t inputImage, __write_only imag
         {0.0030, 0.0133, 0.0219, 0.0133, 0.0030}
     };
 
-    if (imagePixel.x == 0 && imagePixel.y == 0 && imagePixel.z == 0) {
-
+    // Perform computation using local memory
+    float4 occlusion_output = (float4)(0.0f, 0.0f, 0.0f, 1.0f);
+    if (read_imagef(inputImage, CLK_NORMALIZED_COORDS_FALSE | CLK_ADDRESS_CLAMP_TO_EDGE | CLK_FILTER_NEAREST, pos).x == 0.0f) {
         float4 sum = (float4)(0.0f, 0.0f, 0.0f, 0.0f);
         float prevNonZeroValue = 0.0f;
 
-        for (int i = -2; i <= 2; ++i) {
-            for (int j = -2; j <= 2; ++j) {
-                const int2 offsetPos = pos + (int2)(i, j);
-                float4 color = read_imagef(inputImage, sampler, offsetPos);
-                if (color.x != 0) {
-                    prevNonZeroValue = color.x;
-                    break;
-                }
-            }
-        }
-
-        for (int i = -2; i <= 2; ++i) {
-            for (int j = -2; j <= 2; ++j) {
-
-                const int2 offsetPos = pos + (int2)(i, j);
-                float4 color = read_imagef(inputImage, sampler, offsetPos);
+        for (int i = -radius; i <= radius; ++i) {
+            for (int j = -radius; j <= radius; ++j) {
+                const int2 localOffset = localIndex + (int2)(i, j);
+                float4 color = localMem[localOffset.y * localWidth + localOffset.x];
                 if (color.x != 0) {
                     prevNonZeroValue = color.x;
                 } else {
-                    color.x = prevNonZeroValue;
-                    color.y = prevNonZeroValue;
-                    color.z = prevNonZeroValue;
+                    color = (float4)(prevNonZeroValue, prevNonZeroValue, prevNonZeroValue, 1.0f);
                 }
 
-                const float weight = gassian_kernel[i + 2][j + 2];
+                const float weight = gaussian_kernel[i + radius][j + radius];
                 sum += weight * color;
             }
         }
-        occlusion_output.x = sum.x;
-        occlusion_output.y = sum.y;
-        occlusion_output.z = sum.z;
 
+        occlusion_output = sum;
     } else {
-        occlusion_output.x = imagePixel.x;
-        occlusion_output.y = imagePixel.y;
-        occlusion_output.z = imagePixel.z;
+        occlusion_output = read_imagef(inputImage, CLK_NORMALIZED_COORDS_FALSE | CLK_ADDRESS_CLAMP_TO_EDGE | CLK_FILTER_NEAREST, pos);
     }
 
+    // Write output pixel
     write_imagef(outputImage, pos, occlusion_output);
 }
