@@ -339,12 +339,11 @@ void apply_zncc(cl_device_id device, cl_context context, cl_kernel kernel, cl_co
     };
 
     printf("The maximum work-group size is %zu and the work-group multiple is %zu.\n\n", wg_size, wg_multiple);
-    printf("The kernel uses %zu bytes of local memory. It uses %zu bytes of private memory.\n", 
-         local_usage, private_usage);
+    printf("The kernel uses %lu bytes of local memory. It uses %lu bytes of private memory.\n", local_usage, private_usage);
 
     // Execute the OpenCL kernel
     size_t globalWorkSize[2] = { width, height };
-    // size_t localWorkSize[2] = {32, 32};
+    // size_t localWorkSize[2] = { 256, 256 };
     err = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, globalWorkSize, NULL, 0, NULL, &gaussian_event);
     if(err < 0) {
         perror("zncc, Error: clEnqueueNDRangeKernel");
@@ -467,7 +466,10 @@ void apply_crosscheck(cl_context context, cl_kernel kernel, cl_command_queue que
     printf("Time taken to read the output image (crosscheck) = %llu ns\n", read_time);
 }
 
-void apply_occlusion_fill(cl_context context, cl_kernel kernel, cl_command_queue queue, const Image *im0, Image *output_im0) {
+void apply_occlusion_fill(cl_device_id device, cl_context context, cl_kernel kernel, cl_command_queue queue, const Image *im0, Image *output_im0) {
+
+    size_t wg_size, wg_multiple;
+    cl_ulong private_usage, local_usage;
 
     /* Image data */
     cl_mem input_image, output_image;
@@ -514,16 +516,31 @@ void apply_occlusion_fill(cl_context context, cl_kernel kernel, cl_command_queue
         exit(1);
     }
 
-    size_t localMemSize = sizeof(float) * 4 * (1024 + 4 - 1) * (768 + 4 - 1);
-    err = clSetKernelArg(kernel, 2, localMemSize, NULL);
+    // size_t localMemSize = sizeof(float) * 256 * 256;
+    // err = clSetKernelArg(kernel, 2, localMemSize, NULL);
+    // if(err < 0) {
+    //     perror("occlustion_fill, Error: clSetKernelArg, localMemSize");
+    //     exit(1);
+    // }
+
+    /* Access kernel/work-group properties */
+    err = clGetKernelWorkGroupInfo(kernel, device, CL_KERNEL_WORK_GROUP_SIZE, sizeof(wg_size), &wg_size, NULL);
+    err |= clGetKernelWorkGroupInfo(kernel, device, CL_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE, sizeof(wg_multiple), &wg_multiple, NULL);
+    err |= clGetKernelWorkGroupInfo(kernel, device, CL_KERNEL_LOCAL_MEM_SIZE, sizeof(local_usage), &local_usage, NULL);
+    err |= clGetKernelWorkGroupInfo(kernel, device, CL_KERNEL_PRIVATE_MEM_SIZE, sizeof(private_usage), &private_usage, NULL);
     if(err < 0) {
-        perror("occlustion_fill, Error: clSetKernelArg, localMemSize");
+        perror("Couldn't obtain kernel work-group size information");
         exit(1);
-    }
+    };
+
+    printf("The maximum work-group size is %zu and the work-group multiple is %zu.\n\n", wg_size, wg_multiple);
+    printf("The kernel uses %lu bytes of local memory. It uses %lu bytes of private memory.\n", local_usage, private_usage);
+
+    const size_t workSize = 16;
 
     // Execute the OpenCL kernel
     size_t globalWorkSize[2] = { width, height };
-    size_t localWorkSize[2] = {16, 16};
+    size_t localWorkSize[2] = { workSize, workSize };
     err = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, globalWorkSize, localWorkSize, 0, NULL, &occlustion_fill_event);
     if(err < 0) {
         perror("occlustion_fill, Error: clEnqueueNDRangeKernel");
@@ -659,7 +676,7 @@ void openclFlowEx5(void) {
     apply_crosscheck(context, kernel_cross_check, queue, output_left_disparity_im0, output_right_disparity_im0, left_crosscheck_im0);
 
     /* Apply left occlustion fill kernel */
-    apply_occlusion_fill(context, kernel_occlusion_fill, queue, left_crosscheck_im0, output_left_occlusion_im0);
+    apply_occlusion_fill(device, context, kernel_occlusion_fill, queue, left_crosscheck_im0, output_left_occlusion_im0);
 
     saveImage(OUTPUT_1_RESIZE_OPENCL_FILE, output_1_resized_im0);
     saveImage(OUTPUT_1_BW_OPENCL_FILE, output_1_bw_im0);

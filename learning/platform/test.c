@@ -10,6 +10,10 @@ int main() {
     cl_platform_id *platforms;
     cl_uint num_platforms, j;
     cl_int err;
+    // cl_ulong mem_size;
+
+    // mem_size = 23874359374L;
+    // printf("Memory size: %lu\n", mem_size);
 
     err = clGetPlatformIDs(1, NULL, &num_platforms);
     if (err < 0) {
@@ -53,7 +57,7 @@ int main() {
         char buf[128];
         cl_uint work_item_dim, compute_units, char_vector_width, global_mem_size, global_mem_cache, buffer_size, local_mem_size;
         cl_bool image_support;
-        size_t time_res;
+        size_t time_res, local_size;
         cl_device_fp_config flag;
 
         if (num_devices == 0) {
@@ -76,6 +80,9 @@ int main() {
 
             clGetDeviceInfo(devices[i], CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(cl_uint), &compute_units, NULL);
             fprintf(stdout, "The number of parallel compute units : \t\t%u\n", compute_units);
+
+            clGetDeviceInfo(devices[i], CL_DEVICE_MAX_WORK_GROUP_SIZE, sizeof(size_t), &local_size, NULL);
+            fprintf(stdout, "Maximum work group size : \t\t\t%zu \n", local_size);
 
             clGetDeviceInfo(devices[i], CL_DEVICE_PREFERRED_VECTOR_WIDTH_CHAR, sizeof(char_vector_width), &char_vector_width, NULL);
             fprintf(stdout, "Preferred native vector width size : \t\t%u\n", char_vector_width);
